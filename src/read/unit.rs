@@ -1830,6 +1830,7 @@ where
     }
 
     /// Try to convert this attribute's value to an unsigned integer.
+    #[inline]
     pub fn udata_value(&self) -> Option<u64> {
         Some(match *self {
             AttributeValue::Data1(data) => u64::from(data),
@@ -1934,26 +1935,6 @@ where
     }
 }
 
-fn length_u8_value<R: Reader>(input: &mut R) -> Result<R> {
-    let len = input.read_u8().map(R::Offset::from_u8)?;
-    input.split(len)
-}
-
-fn length_u16_value<R: Reader>(input: &mut R) -> Result<R> {
-    let len = input.read_u16().map(R::Offset::from_u16)?;
-    input.split(len)
-}
-
-fn length_u32_value<R: Reader>(input: &mut R) -> Result<R> {
-    let len = input.read_u32().map(R::Offset::from_u32)?;
-    input.split(len)
-}
-
-fn length_uleb128_value<R: Reader>(input: &mut R) -> Result<R> {
-    let len = input.read_uleb128().and_then(R::Offset::from_u64)?;
-    input.split(len)
-}
-
 // Return true if the given `name` can be a section offset in DWARF version 2/3.
 // This is required to correctly handle relocations.
 fn allow_section_offset(name: constants::DwAt, version: u16) -> bool {
@@ -1976,229 +1957,218 @@ fn allow_section_offset(name: constants::DwAt, version: u16) -> bool {
     }
 }
 
+enum ReadKind {
+    Fixed(u8),
+    ULeb,
+    None,
+}
+
 pub(crate) fn parse_attribute<R: Reader>(
     input: &mut R,
     encoding: Encoding,
     spec: AttributeSpecification,
 ) -> Result<Attribute<R>> {
     let mut form = spec.form();
-    loop {
-        let value = match form {
-            constants::DW_FORM_indirect => {
-                let dynamic_form = input.read_uleb128_u16()?;
-                form = constants::DwForm(dynamic_form);
-                continue;
-            }
-            constants::DW_FORM_addr => {
-                let addr = input.read_address(encoding.address_size)?;
-                AttributeValue::Addr(addr)
-            }
-            constants::DW_FORM_block1 => {
-                let block = length_u8_value(input)?;
-                AttributeValue::Block(block)
-            }
-            constants::DW_FORM_block2 => {
-                let block = length_u16_value(input)?;
-                AttributeValue::Block(block)
-            }
-            constants::DW_FORM_block4 => {
-                let block = length_u32_value(input)?;
-                AttributeValue::Block(block)
-            }
-            constants::DW_FORM_block => {
-                let block = length_uleb128_value(input)?;
-                AttributeValue::Block(block)
-            }
-            constants::DW_FORM_data1 => {
-                let data = input.read_u8()?;
-                AttributeValue::Data1(data)
-            }
-            constants::DW_FORM_data2 => {
-                let data = input.read_u16()?;
-                AttributeValue::Data2(data)
-            }
-            constants::DW_FORM_data4 => {
-                // DWARF version 2/3 may use DW_FORM_data4/8 for section offsets.
-                // Ensure we handle relocations here.
-                if encoding.format == Format::Dwarf32
-                    && allow_section_offset(spec.name(), encoding.version)
-                {
-                    let offset = input.read_offset(Format::Dwarf32)?;
-                    AttributeValue::SecOffset(offset)
-                } else {
-                    let data = input.read_u32()?;
-                    AttributeValue::Data4(data)
-                }
-            }
-            constants::DW_FORM_data8 => {
-                // DWARF version 2/3 may use DW_FORM_data4/8 for section offsets.
-                // Ensure we handle relocations here.
-                if encoding.format == Format::Dwarf64
-                    && allow_section_offset(spec.name(), encoding.version)
-                {
-                    let offset = input.read_offset(Format::Dwarf64)?;
-                    AttributeValue::SecOffset(offset)
-                } else {
-                    let data = input.read_u64()?;
-                    AttributeValue::Data8(data)
-                }
-            }
-            constants::DW_FORM_data16 => {
-                let block = input.split(R::Offset::from_u8(16))?;
-                AttributeValue::Block(block)
-            }
-            constants::DW_FORM_udata => {
-                let data = input.read_uleb128()?;
-                AttributeValue::Udata(data)
-            }
-            constants::DW_FORM_sdata => {
-                let data = input.read_sleb128()?;
-                AttributeValue::Sdata(data)
-            }
-            constants::DW_FORM_exprloc => {
-                let block = length_uleb128_value(input)?;
-                AttributeValue::Exprloc(Expression(block))
-            }
-            constants::DW_FORM_flag => {
-                let present = input.read_u8()?;
-                AttributeValue::Flag(present != 0)
-            }
-            constants::DW_FORM_flag_present => {
-                // FlagPresent is this weird compile time always true thing that
-                // isn't actually present in the serialized DIEs, only in the abbreviation.
-                AttributeValue::Flag(true)
-            }
-            constants::DW_FORM_sec_offset => {
-                let offset = input.read_offset(encoding.format)?;
-                AttributeValue::SecOffset(offset)
-            }
-            constants::DW_FORM_ref1 => {
-                let reference = input.read_u8().map(R::Offset::from_u8)?;
-                AttributeValue::UnitRef(UnitOffset(reference))
-            }
-            constants::DW_FORM_ref2 => {
-                let reference = input.read_u16().map(R::Offset::from_u16)?;
-                AttributeValue::UnitRef(UnitOffset(reference))
-            }
-            constants::DW_FORM_ref4 => {
-                let reference = input.read_u32().map(R::Offset::from_u32)?;
-                AttributeValue::UnitRef(UnitOffset(reference))
-            }
-            constants::DW_FORM_ref8 => {
-                let reference = input.read_u64().and_then(R::Offset::from_u64)?;
-                AttributeValue::UnitRef(UnitOffset(reference))
-            }
-            constants::DW_FORM_ref_udata => {
-                let reference = input.read_uleb128().and_then(R::Offset::from_u64)?;
-                AttributeValue::UnitRef(UnitOffset(reference))
-            }
-            constants::DW_FORM_ref_addr => {
-                // This is an offset, but DWARF version 2 specifies that DW_FORM_ref_addr
-                // has the same size as an address on the target system.  This was changed
-                // in DWARF version 3.
-                let offset = if encoding.version == 2 {
-                    input.read_sized_offset(encoding.address_size)?
-                } else {
-                    input.read_offset(encoding.format)?
-                };
-                AttributeValue::DebugInfoRef(DebugInfoOffset(offset))
-            }
-            constants::DW_FORM_ref_sig8 => {
-                let signature = input.read_u64()?;
-                AttributeValue::DebugTypesRef(DebugTypeSignature(signature))
-            }
-            constants::DW_FORM_ref_sup4 => {
-                let offset = input.read_u32().map(R::Offset::from_u32)?;
-                AttributeValue::DebugInfoRefSup(DebugInfoOffset(offset))
-            }
-            constants::DW_FORM_ref_sup8 => {
-                let offset = input.read_u64().and_then(R::Offset::from_u64)?;
-                AttributeValue::DebugInfoRefSup(DebugInfoOffset(offset))
-            }
-            constants::DW_FORM_GNU_ref_alt => {
-                let offset = input.read_offset(encoding.format)?;
-                AttributeValue::DebugInfoRefSup(DebugInfoOffset(offset))
-            }
-            constants::DW_FORM_string => {
-                let string = input.read_null_terminated_slice()?;
-                AttributeValue::String(string)
-            }
-            constants::DW_FORM_strp => {
-                let offset = input.read_offset(encoding.format)?;
-                AttributeValue::DebugStrRef(DebugStrOffset(offset))
-            }
-            constants::DW_FORM_strp_sup | constants::DW_FORM_GNU_strp_alt => {
-                let offset = input.read_offset(encoding.format)?;
-                AttributeValue::DebugStrRefSup(DebugStrOffset(offset))
-            }
-            constants::DW_FORM_line_strp => {
-                let offset = input.read_offset(encoding.format)?;
-                AttributeValue::DebugLineStrRef(DebugLineStrOffset(offset))
-            }
-            constants::DW_FORM_implicit_const => {
-                let data = spec
-                    .implicit_const_value()
-                    .ok_or(Error::InvalidImplicitConst)?;
-                AttributeValue::Sdata(data)
-            }
-            constants::DW_FORM_strx | constants::DW_FORM_GNU_str_index => {
-                let index = input.read_uleb128().and_then(R::Offset::from_u64)?;
-                AttributeValue::DebugStrOffsetsIndex(DebugStrOffsetsIndex(index))
-            }
-            constants::DW_FORM_strx1 => {
-                let index = input.read_u8().map(R::Offset::from_u8)?;
-                AttributeValue::DebugStrOffsetsIndex(DebugStrOffsetsIndex(index))
-            }
-            constants::DW_FORM_strx2 => {
-                let index = input.read_u16().map(R::Offset::from_u16)?;
-                AttributeValue::DebugStrOffsetsIndex(DebugStrOffsetsIndex(index))
-            }
-            constants::DW_FORM_strx3 => {
-                let index = input.read_uint(3).and_then(R::Offset::from_u64)?;
-                AttributeValue::DebugStrOffsetsIndex(DebugStrOffsetsIndex(index))
-            }
-            constants::DW_FORM_strx4 => {
-                let index = input.read_u32().map(R::Offset::from_u32)?;
-                AttributeValue::DebugStrOffsetsIndex(DebugStrOffsetsIndex(index))
-            }
-            constants::DW_FORM_addrx | constants::DW_FORM_GNU_addr_index => {
-                let index = input.read_uleb128().and_then(R::Offset::from_u64)?;
-                AttributeValue::DebugAddrIndex(DebugAddrIndex(index))
-            }
-            constants::DW_FORM_addrx1 => {
-                let index = input.read_u8().map(R::Offset::from_u8)?;
-                AttributeValue::DebugAddrIndex(DebugAddrIndex(index))
-            }
-            constants::DW_FORM_addrx2 => {
-                let index = input.read_u16().map(R::Offset::from_u16)?;
-                AttributeValue::DebugAddrIndex(DebugAddrIndex(index))
-            }
-            constants::DW_FORM_addrx3 => {
-                let index = input.read_uint(3).and_then(R::Offset::from_u64)?;
-                AttributeValue::DebugAddrIndex(DebugAddrIndex(index))
-            }
-            constants::DW_FORM_addrx4 => {
-                let index = input.read_u32().map(R::Offset::from_u32)?;
-                AttributeValue::DebugAddrIndex(DebugAddrIndex(index))
-            }
-            constants::DW_FORM_loclistx => {
-                let index = input.read_uleb128().and_then(R::Offset::from_u64)?;
-                AttributeValue::DebugLocListsIndex(DebugLocListsIndex(index))
-            }
-            constants::DW_FORM_rnglistx => {
-                let index = input.read_uleb128().and_then(R::Offset::from_u64)?;
-                AttributeValue::DebugRngListsIndex(DebugRngListsIndex(index))
-            }
-            _ => {
-                return Err(Error::UnknownForm);
-            }
-        };
-        let attr = Attribute {
-            name: spec.name(),
-            value,
-        };
-        return Ok(attr);
+
+    while let constants::DW_FORM_indirect = form {
+        let dynamic_form = input.read_uleb128_u16()?;
+        form = constants::DwForm(dynamic_form);
+        continue;
     }
+
+    let read_kind = match form {
+        constants::DW_FORM_addr => ReadKind::Fixed(encoding.address_size),
+        constants::DW_FORM_block1 => ReadKind::Fixed(1),
+        constants::DW_FORM_block2 => ReadKind::Fixed(2),
+        constants::DW_FORM_block4 => ReadKind::Fixed(4),
+        constants::DW_FORM_block => ReadKind::ULeb,
+        constants::DW_FORM_data1 => ReadKind::Fixed(1),
+        constants::DW_FORM_data2 => ReadKind::Fixed(2),
+        constants::DW_FORM_data4 => ReadKind::Fixed(4),
+        constants::DW_FORM_data8 => ReadKind::Fixed(8),
+        constants::DW_FORM_data16 => ReadKind::None, // Doesn't actually read anything
+        constants::DW_FORM_udata => ReadKind::ULeb,
+        constants::DW_FORM_sdata => ReadKind::None, // Reads an i64, which won't fit.
+        constants::DW_FORM_exprloc => ReadKind::ULeb,
+        constants::DW_FORM_flag => ReadKind::Fixed(1),
+        constants::DW_FORM_flag_present => ReadKind::None,
+        constants::DW_FORM_sec_offset => ReadKind::Fixed(encoding.format.word_size()),
+        constants::DW_FORM_ref1 => ReadKind::Fixed(1),
+        constants::DW_FORM_ref2 => ReadKind::Fixed(2),
+        constants::DW_FORM_ref4 => ReadKind::Fixed(4),
+        constants::DW_FORM_ref8 => ReadKind::Fixed(8),
+        constants::DW_FORM_ref_udata => ReadKind::ULeb,
+        constants::DW_FORM_ref_addr => {
+            // This is an offset, but DWARF version 2 specifies that DW_FORM_ref_addr
+            // has the same size as an address on the target system.  This was changed
+            // in DWARF version 3.
+            let bytes = if encoding.version == 2 {
+                encoding.address_size
+            } else {
+                encoding.format.word_size()
+            };
+            ReadKind::Fixed(bytes)
+        }
+        constants::DW_FORM_ref_sig8 => ReadKind::Fixed(8),
+        constants::DW_FORM_ref_sup4 => ReadKind::Fixed(4),
+        constants::DW_FORM_ref_sup8 => ReadKind::Fixed(8),
+        constants::DW_FORM_GNU_ref_alt => ReadKind::Fixed(encoding.format.word_size()),
+        constants::DW_FORM_string => ReadKind::None,
+        constants::DW_FORM_strp
+        | constants::DW_FORM_strp_sup
+        | constants::DW_FORM_GNU_strp_alt
+        | constants::DW_FORM_line_strp => ReadKind::Fixed(encoding.format.word_size()),
+        constants::DW_FORM_implicit_const => ReadKind::None,
+        constants::DW_FORM_strx | constants::DW_FORM_GNU_str_index => ReadKind::ULeb,
+        constants::DW_FORM_strx1 => ReadKind::Fixed(1),
+        constants::DW_FORM_strx2 => ReadKind::Fixed(2),
+        constants::DW_FORM_strx3 => ReadKind::Fixed(3),
+        constants::DW_FORM_strx4 => ReadKind::Fixed(4),
+        constants::DW_FORM_addrx | constants::DW_FORM_GNU_addr_index => ReadKind::ULeb,
+        constants::DW_FORM_addrx1 => ReadKind::Fixed(1),
+        constants::DW_FORM_addrx2 => ReadKind::Fixed(2),
+        constants::DW_FORM_addrx3 => ReadKind::Fixed(3),
+        constants::DW_FORM_addrx4 => ReadKind::Fixed(4),
+        constants::DW_FORM_loclistx => ReadKind::ULeb,
+        constants::DW_FORM_rnglistx => ReadKind::ULeb,
+        _ => ReadKind::None,
+    };
+
+    let value: u64 = match read_kind {
+        ReadKind::Fixed(bytes) => input.read_uint(bytes.into()),
+        ReadKind::ULeb => input.read_uleb128(),
+        ReadKind::None => Ok(0),
+    }?;
+
+    let value = match form {
+        constants::DW_FORM_addr => AttributeValue::Addr(value),
+        constants::DW_FORM_block1
+        | constants::DW_FORM_block2
+        | constants::DW_FORM_block4
+        | constants::DW_FORM_block => {
+            let block = R::Offset::from_u64(value).and_then(|len| input.split(len))?;
+            AttributeValue::Block(block)
+        }
+        constants::DW_FORM_data1 => AttributeValue::Data1(value as u8),
+        constants::DW_FORM_data2 => AttributeValue::Data2(value as u16),
+        constants::DW_FORM_data4 => {
+            // DWARF version 2/3 may use DW_FORM_data4/8 for section offsets.
+            // Ensure we handle relocations here.
+            if encoding.format == Format::Dwarf32
+                && allow_section_offset(spec.name(), encoding.version)
+            {
+                AttributeValue::SecOffset(R::Offset::from_u64(value)?)
+            } else {
+                AttributeValue::Data4(value as u32)
+            }
+        }
+        constants::DW_FORM_data8 => {
+            // DWARF version 2/3 may use DW_FORM_data4/8 for section offsets.
+            // Ensure we handle relocations here.
+            if encoding.format == Format::Dwarf64
+                && allow_section_offset(spec.name(), encoding.version)
+            {
+                AttributeValue::SecOffset(R::Offset::from_u64(value)?)
+            } else {
+                AttributeValue::Data8(value)
+            }
+        }
+        constants::DW_FORM_data16 => {
+            let block = input.split(R::Offset::from_u8(16))?;
+            AttributeValue::Block(block)
+        }
+        constants::DW_FORM_udata => AttributeValue::Udata(value),
+        constants::DW_FORM_sdata => {
+            let data = input.read_sleb128()?;
+            AttributeValue::Sdata(data)
+        }
+        constants::DW_FORM_exprloc => {
+            let block = R::Offset::from_u64(value).and_then(|len| input.split(len))?;
+            AttributeValue::Exprloc(Expression(block))
+        }
+        constants::DW_FORM_flag => AttributeValue::Flag(value != 0),
+        constants::DW_FORM_flag_present => {
+            // FlagPresent is this weird compile time always true thing that
+            // isn't actually present in the serialized DIEs, only in the abbreviation.
+            AttributeValue::Flag(true)
+        }
+        constants::DW_FORM_sec_offset => AttributeValue::SecOffset(R::Offset::from_u64(value)?),
+        constants::DW_FORM_ref1
+        | constants::DW_FORM_ref2
+        | constants::DW_FORM_ref4
+        | constants::DW_FORM_ref8
+        | constants::DW_FORM_ref_udata => {
+            let reference = R::Offset::from_u64(value)?;
+            AttributeValue::UnitRef(UnitOffset(reference))
+        }
+        constants::DW_FORM_ref_addr => {
+            let offset = R::Offset::from_u64(value)?;
+            AttributeValue::DebugInfoRef(DebugInfoOffset(offset))
+        }
+        constants::DW_FORM_ref_sig8 => AttributeValue::DebugTypesRef(DebugTypeSignature(value)),
+        constants::DW_FORM_ref_sup4
+        | constants::DW_FORM_ref_sup8
+        | constants::DW_FORM_GNU_ref_alt => {
+            let offset = R::Offset::from_u64(value)?;
+            AttributeValue::DebugInfoRefSup(DebugInfoOffset(offset))
+        }
+        constants::DW_FORM_string => {
+            let string = input.read_null_terminated_slice()?;
+            AttributeValue::String(string)
+        }
+        constants::DW_FORM_strp => {
+            let offset = R::Offset::from_u64(value)?;
+            AttributeValue::DebugStrRef(DebugStrOffset(offset))
+        }
+        constants::DW_FORM_strp_sup | constants::DW_FORM_GNU_strp_alt => {
+            let offset = R::Offset::from_u64(value)?;
+            AttributeValue::DebugStrRefSup(DebugStrOffset(offset))
+        }
+        constants::DW_FORM_line_strp => {
+            let offset = R::Offset::from_u64(value)?;
+            AttributeValue::DebugLineStrRef(DebugLineStrOffset(offset))
+        }
+        constants::DW_FORM_implicit_const => {
+            let data = spec
+                .implicit_const_value()
+                .ok_or(Error::InvalidImplicitConst)?;
+            AttributeValue::Sdata(data)
+        }
+        constants::DW_FORM_strx
+        | constants::DW_FORM_GNU_str_index
+        | constants::DW_FORM_strx1
+        | constants::DW_FORM_strx2
+        | constants::DW_FORM_strx3
+        | constants::DW_FORM_strx4 => {
+            let index = R::Offset::from_u64(value)?;
+            AttributeValue::DebugStrOffsetsIndex(DebugStrOffsetsIndex(index))
+        }
+        constants::DW_FORM_addrx
+        | constants::DW_FORM_GNU_addr_index
+        | constants::DW_FORM_addrx1
+        | constants::DW_FORM_addrx2
+        | constants::DW_FORM_addrx3
+        | constants::DW_FORM_addrx4 => {
+            let index = R::Offset::from_u64(value)?;
+            AttributeValue::DebugAddrIndex(DebugAddrIndex(index))
+        }
+        constants::DW_FORM_loclistx => {
+            let index = R::Offset::from_u64(value)?;
+            AttributeValue::DebugLocListsIndex(DebugLocListsIndex(index))
+        }
+        constants::DW_FORM_rnglistx => {
+            let index = R::Offset::from_u64(value)?;
+            AttributeValue::DebugRngListsIndex(DebugRngListsIndex(index))
+        }
+        _ => {
+            return Err(Error::UnknownForm);
+        }
+    };
+    let attr = Attribute {
+        name: spec.name(),
+        value,
+    };
+    return Ok(attr);
 }
 
 pub(crate) fn skip_attributes<R: Reader>(

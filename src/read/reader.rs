@@ -455,10 +455,7 @@ pub trait Reader: Debug + Clone {
     /// Read an address-sized integer, and return it as a `u64`.
     fn read_address(&mut self, address_size: u8) -> Result<u64> {
         match address_size {
-            1 => self.read_u8().map(u64::from),
-            2 => self.read_u16().map(u64::from),
-            4 => self.read_u32().map(u64::from),
-            8 => self.read_u64(),
+            1 | 2 | 4 | 8 => self.read_uint(address_size as usize),
             otherwise => Err(Error::UnsupportedAddressSize(otherwise)),
         }
     }
@@ -468,10 +465,11 @@ pub trait Reader: Debug + Clone {
     /// These are always used to encode section offsets or lengths,
     /// and so have a type of `Self::Offset`.
     fn read_word(&mut self, format: Format) -> Result<Self::Offset> {
-        match format {
-            Format::Dwarf32 => self.read_u32().map(Self::Offset::from_u32),
-            Format::Dwarf64 => self.read_u64().and_then(Self::Offset::from_u64),
-        }
+        let len = match format {
+            Format::Dwarf32 => 4,
+            Format::Dwarf64 => 8,
+        };
+        self.read_uint(len).and_then(Self::Offset::from_u64)
     }
 
     /// Parse a word-sized section length according to the DWARF format.
@@ -491,10 +489,7 @@ pub trait Reader: Debug + Clone {
     /// This is used for `DW_FORM_ref_addr` values in DWARF version 2.
     fn read_sized_offset(&mut self, size: u8) -> Result<Self::Offset> {
         match size {
-            1 => self.read_u8().map(u64::from),
-            2 => self.read_u16().map(u64::from),
-            4 => self.read_u32().map(u64::from),
-            8 => self.read_u64(),
+            1 | 2 | 4 | 8 => self.read_uint(size as usize),
             otherwise => Err(Error::UnsupportedOffsetSize(otherwise)),
         }
         .and_then(Self::Offset::from_u64)

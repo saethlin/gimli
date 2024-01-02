@@ -209,7 +209,7 @@ impl<R: Reader> Dwarf<R> {
     }
 
     /// Parse the abbreviations for a compilation unit.
-    #[inline]
+    #[inline(never)]
     pub fn abbreviations(&self, unit: &UnitHeader<R>) -> Result<Arc<Abbreviations>> {
         self.abbreviations_cache
             .get(&self.debug_abbrev, unit.debug_abbrev_offset())
@@ -876,7 +876,7 @@ impl<R: Reader> Unit<R> {
     /// The abbreviations for this call can be obtained using `dwarf.abbreviations(&header)`.
     /// The caller may implement caching to reuse the `Abbreviations` across units with the
     /// same `header.debug_abbrev_offset()` value.
-    #[inline]
+    #[inline(never)]
     pub fn new_with_abbreviations(
         dwarf: &Dwarf<R>,
         header: UnitHeader<R>,
@@ -919,44 +919,45 @@ impl<R: Reader> Unit<R> {
             let root = cursor.current().ok_or(Error::MissingUnitDie)?;
             let mut attrs = root.attrs();
             while let Some(attr) = attrs.next()? {
+                let value = attr.value();
                 match attr.name() {
                     constants::DW_AT_name => {
-                        name = Some(attr.value());
+                        name = Some(value);
                     }
                     constants::DW_AT_comp_dir => {
-                        comp_dir = Some(attr.value());
+                        comp_dir = Some(value);
                     }
                     constants::DW_AT_low_pc => {
-                        low_pc_attr = Some(attr.value());
+                        low_pc_attr = Some(value);
                     }
                     constants::DW_AT_stmt_list => {
-                        if let AttributeValue::DebugLineRef(offset) = attr.value() {
+                        if let AttributeValue::DebugLineRef(offset) = value {
                             line_program_offset = Some(offset);
                         }
                     }
                     constants::DW_AT_str_offsets_base => {
-                        if let AttributeValue::DebugStrOffsetsBase(base) = attr.value() {
+                        if let AttributeValue::DebugStrOffsetsBase(base) = value {
                             unit.str_offsets_base = base;
                         }
                     }
                     constants::DW_AT_addr_base | constants::DW_AT_GNU_addr_base => {
-                        if let AttributeValue::DebugAddrBase(base) = attr.value() {
+                        if let AttributeValue::DebugAddrBase(base) = value {
                             unit.addr_base = base;
                         }
                     }
                     constants::DW_AT_loclists_base => {
-                        if let AttributeValue::DebugLocListsBase(base) = attr.value() {
+                        if let AttributeValue::DebugLocListsBase(base) = value {
                             unit.loclists_base = base;
                         }
                     }
                     constants::DW_AT_rnglists_base | constants::DW_AT_GNU_ranges_base => {
-                        if let AttributeValue::DebugRngListsBase(base) = attr.value() {
+                        if let AttributeValue::DebugRngListsBase(base) = value {
                             unit.rnglists_base = base;
                         }
                     }
                     constants::DW_AT_GNU_dwo_id => {
                         if unit.dwo_id.is_none() {
-                            if let AttributeValue::DwoId(dwo_id) = attr.value() {
+                            if let AttributeValue::DwoId(dwo_id) = value {
                                 unit.dwo_id = Some(dwo_id);
                             }
                         }
