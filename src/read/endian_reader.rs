@@ -475,6 +475,16 @@ where
             None => Err(Error::UnexpectedEof(self.offset_id())),
         }
     }
+
+    #[inline]
+    fn read_uint(&mut self, n: usize) -> Result<u64> {
+        let Some(buf) = self.bytes().get(..n) else {
+            return Err(Error::UnexpectedEof(self.offset_id()));
+        };
+        let res = Ok(self.endian().read_uint(buf));
+        self.range.skip(n);
+        res
+    }
 }
 
 #[cfg(test)]
