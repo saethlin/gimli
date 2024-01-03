@@ -65,7 +65,7 @@ pub trait Endianity: Debug + Default + Clone + Copy + PartialEq + Eq {
     ///
     /// Panics when `buf.len() < 1` or `buf.len() > 8`.
     #[inline]
-    fn read_uint(&mut self, buf: &[u8]) -> u64 {
+    fn read_uint(&self, buf: &[u8]) -> u64 {
         let mut tmp = [0; 8];
         if self.is_big_endian() {
             tmp[8 - buf.len()..].copy_from_slice(buf);

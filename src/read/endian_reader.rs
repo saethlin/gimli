@@ -475,6 +475,22 @@ where
             None => Err(Error::UnexpectedEof(self.offset_id())),
         }
     }
+
+    #[inline]
+    fn peek_read(&self, len: usize) -> Result<&[u8]> {
+        if self.len() < len {
+            Err(Error::UnexpectedEof(self.offset_id()))
+        } else {
+            // Same as for `bytes()`.
+            let bytes = unsafe { slice::from_raw_parts(self.range.ptr, len) };
+            Ok(bytes)
+        }
+    }
+
+    #[inline]
+    fn consume(&mut self, len: usize) {
+        let _ = self.skip(len);
+    }
 }
 
 #[cfg(test)]

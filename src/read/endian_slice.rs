@@ -329,6 +329,18 @@ where
         buf.copy_from_slice(slice);
         Ok(())
     }
+
+    #[inline]
+    fn peek_read(&self, n: usize) -> Result<&'input [u8]> {
+        self.slice
+            .get(..n)
+            .ok_or_else(|| Error::UnexpectedEof(self.offset_id()))
+    }
+
+    #[inline]
+    fn consume(&mut self, n: usize) {
+        self.slice = self.slice.get(n..).unwrap_or_default();
+    }
 }
 
 #[cfg(test)]

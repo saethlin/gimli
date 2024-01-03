@@ -299,6 +299,16 @@ pub trait Reader: Debug + Clone {
     /// Read exactly `buf.len()` bytes into `buf`.
     fn read_slice(&mut self, buf: &mut [u8]) -> Result<()>;
 
+    /// If this reader wraps a buffer of any kind, this function lets callers access contents of
+    /// the buffer without passing data through a buffer first.
+    fn peek_read(&self, _: usize) -> Result<&[u8]> {
+        Err(Error::Io)
+    }
+
+    /// If an implementation of `peek_read` is provided, an implementation of this function
+    /// must be provided so that subsequent reads or peek-reads do not return the same bytes
+    fn consume(&mut self, _: usize) {}
+
     /// Read a u8 array.
     #[inline]
     fn read_u8_array<A>(&mut self) -> Result<A>
@@ -393,9 +403,10 @@ pub trait Reader: Debug + Clone {
     /// Panics when nbytes < 1 or nbytes > 8
     #[inline]
     fn read_uint(&mut self, n: usize) -> Result<u64> {
-        let mut buf = [0; 8];
-        self.read_slice(&mut buf[..n])?;
-        Ok(self.endian().read_uint(&buf[..n]))
+        let buf = self.peek_read(n)?;
+        let res = Ok(self.endian().read_uint(&buf[..n]));
+        self.consume(n);
+        res
     }
 
     /// Read a null-terminated slice, and return it (excluding the null).
